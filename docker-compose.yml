@@ -1,0 +1,67 @@
+version: "3.8"
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    networks:
+      - weather-net
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    networks:
+      - weather-net
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9093:9093"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    networks:
+      - weather-net
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8080:8080"
+
+  pyspark-notebook:
+    image: jupyter/pyspark-notebook:latest
+    container_name: pyspark-notebook
+    networks:
+      - weather-net
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./work:/home/jovyan/work
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+    command: >
+      sh -c "
+      start-notebook.sh --NotebookApp.token='' --NotebookApp.password='' --ip='*' &
+      sleep infinity
+      "
+    depends_on:
+      - kafka
+
+networks:
+  weather-net:
+    external: true
+    name: weather-net
