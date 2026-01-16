@@ -1,67 +1,163 @@
-version: "3.8"
+version: '3.8'
+
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    container_name: zookeeper
+  # HDFS - Naménode
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - "9870:9870"   # Web UI
+      - "9000:9000"   # HDFS Service
+    environment:
+      - CLUSTER_NAME=climate_datalake
+    volumes:
+      - namenode_data:/hadoop/dfs/name
     networks:
-      - weather-net
+      - datalake_net
+
+  # HDFS - Datanode
+  datanode1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode1
+    hostname: datanode1
+    depends_on:
+      - namenode
+    environment:
+      - SERVICE_PRECONDITION=namenode:9000
+    volumes:
+      - datanode1_data:/hadoop/dfs/data
+    networks:
+      - datalake_net
+
+  # Spark Master
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"   # Spark Master UI
+      - "7077:7077"   # Spark Master Port
+    environment:
+      - SPARK_MODE=master
+    command: bin/spark-class org.apache.spark.deploy.master.Master
+    networks:
+      - datalake_net
+
+  # Spark Worker
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    hostname: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    networks:
+      - datalake_net
+
+  # Zookeeper pour Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
-
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    container_name: kafka
     networks:
-      - weather-net
+      - datalake_net
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
     depends_on:
       - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    ports:
-      - "9093:9093"
+    networks:
+      - datalake_net
 
+  # Kafka UI
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
-    networks:
-      - weather-net
     depends_on:
       - kafka
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     ports:
-      - "8080:8080"
-
-  pyspark-notebook:
-    image: jupyter/pyspark-notebook:latest
-    container_name: pyspark-notebook
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: climate-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     networks:
-      - weather-net
+      - datalake_net
+
+  # Streamlit Dashboard
+  streamlit:
+    build: .
+    container_name: streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./frontend:/app
+      - ./data:/app/data
+      - ./ingestion:/app/ingestion
+      - ./spark-jobs:/app/spark-jobs
+    environment:
+      - HDFS_NAMENODE=namenode
+      - HDFS_PORT=9000
+      - KAFKA_BROKER=kafka:9092
+      - SPARK_MASTER=spark://spark-master:7077
+    depends_on:
+      - namenode
+      - kafka
+      - spark-master
+    networks:
+      - datalake_net
+
+  # Jupyter Notebook pour développement
+  jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter
     ports:
       - "8888:8888"
     volumes:
-      - ./work:/home/jovyan/work
+      - ./notebooks:/home/jovyan/work
+      - ./ingestion:/home/jovyan/ingestion
+      - ./spark-jobs:/home/jovyan/spark-jobs
     environment:
-      - KAFKA_BROKERS=kafka:9092
-    command: >
-      sh -c "
-      start-notebook.sh --NotebookApp.token='' --NotebookApp.password='' --ip='*' &
-      sleep infinity
-      "
-    depends_on:
-      - kafka
+      JUPYTER_ENABLE_LAB: "yes"
+    networks:
+      - datalake_net
+
+  # Spark History Server
+  spark-history:
+    image: apache/spark:3.5.0
+    container_name: spark-history
+    ports:
+      - "18080:8080"
+    command: bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    volumes:
+      - ./spark-events:/tmp/spark-events
+    environment:
+      SPARK_HISTORY_OPTS: -Dspark.history.fs.logDirectory=/tmp/spark-events
+    networks:
+      - datalake_net
 
 networks:
-  weather-net:
-    external: true
-    name: weather-net
+  datalake_net:
+    driver: bridge
+
+volumes:
+  namenode_data:
+  datanode1_data:

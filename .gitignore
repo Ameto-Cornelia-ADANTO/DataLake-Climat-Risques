@@ -1,0 +1,28 @@
+﻿# Fichiers temporaires Office
+~$*
+*.tmp
+*.temp
+
+# Fichiers système Windows
+Thumbs.db
+Desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+.python-version
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Système
+.DS_Store
+
+# Docker
+*.log
